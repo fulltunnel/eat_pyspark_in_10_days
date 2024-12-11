@@ -1374,11 +1374,237 @@ dforder.show()
 ```
 
 ```python
+#爆炸函数
+
+import pyspark.sql.functions as F 
+students = [("LiLei","Swim|Sing|FootBall"),("Ann","Sing|Dance"),("LiLy","Reading|Sing|Dance")]
+dfstudents = spark.createDataFrame(students,["name","hobbies"])
+
+dfstudents.show()
+dfstudents.createOrReplaceTempView("students")
+
+#explode一行转多行,通常搭配LATERAL VIEW使用
+dfhobby = spark.sql("select name,hobby from students LATERAL VIEW explode(split(hobbies,'\\\\|')) tmp as hobby") #注意特殊字符作为分隔符要加四个斜杠
+dfhobby.show() 
+
+#统计每种hobby有多少同学喜欢
+dfcount = dfhobby.groupBy("hobby").agg(F.expr("count(name) as cnt"))
+dfcount.show() 
 
 ```
 
-### 五，DataFrame的SQL交互
+```
++-----+------------------+
+| name|           hobbies|
++-----+------------------+
+|LiLei|Swim|Sing|FootBall|
+|  Ann|        Sing|Dance|
+| LiLy|Reading|Sing|Dance|
++-----+------------------+
 
++-----+--------+
+| name|   hobby|
++-----+--------+
+|LiLei|    Swim|
+|LiLei|    Sing|
+|LiLei|FootBall|
+|  Ann|    Sing|
+|  Ann|   Dance|
+| LiLy| Reading|
+| LiLy|    Sing|
+| LiLy|   Dance|
++-----+--------+
+
++--------+---+
+|   hobby|cnt|
++--------+---+
+|    Swim|  1|
+|FootBall|  1|
+|    Sing|  3|
+| Reading|  1|
+|   Dance|  2|
++--------+---+
+
+```
+
+```python
+#复合数据类型
+
+#(集合类型)
+import pyspark.sql.functions as F 
+students = [("LiLei",89,76,65),("HanMeiMei",97,98,89),("Lucy",66,55,70)]
+
+dfstudents = spark.createDataFrame(students,["name","math","physics","music"])
+dfstudents.show() 
+
+#array类型
+print("array类型")
+dfarray = dfstudents.selectExpr("name","array(math,physics,music) as score")
+dfarray.show() 
+dfarray.selectExpr("name","score[0] as math").show()
+
+
+#struct类型
+
+print("struct类型")
+dfstruct = dfstudents.selectExpr("name","struct('math',math,'physics',physics,'music',music) as score")
+dfstruct.show() 
+dfstruct.selectExpr("name","score.physics").show()
+
+
+#map类型
+print("map类型")
+dfmap = dfstudents.selectExpr("name","map('math',math,'physics',physics,'music',music) as score")
+dfmap.show() 
+dfmap.selectExpr("name","score['math'] as math").show()
+
+```
+
+```
++---------+----+-------+-----+
+|     name|math|physics|music|
++---------+----+-------+-----+
+|    LiLei|  89|     76|   65|
+|HanMeiMei|  97|     98|   89|
+|     Lucy|  66|     55|   70|
++---------+----+-------+-----+
+
+array类型
++---------+------------+
+|     name|       score|
++---------+------------+
+|    LiLei|[89, 76, 65]|
+|HanMeiMei|[97, 98, 89]|
+|     Lucy|[66, 55, 70]|
++---------+------------+
+
++---------+----+
+|     name|math|
++---------+----+
+|    LiLei|  89|
+|HanMeiMei|  97|
+|     Lucy|  66|
++---------+----+
+
+struct类型
++---------+--------------------+
+|     name|               score|
++---------+--------------------+
+|    LiLei|[math,89,physics,...|
+|HanMeiMei|[math,97,physics,...|
+|     Lucy|[math,66,physics,...|
++---------+--------------------+
+
++---------+-------+
+|     name|physics|
++---------+-------+
+|    LiLei|     76|
+|HanMeiMei|     98|
+|     Lucy|     55|
++---------+-------+
+
+map类型
++---------+--------------------+
+|     name|               score|
++---------+--------------------+
+|    LiLei|Map(math -> 89, p...|
+|HanMeiMei|Map(math -> 97, p...|
+|     Lucy|Map(math -> 66, p...|
++---------+--------------------+
+
++---------+----+
+|     name|math|
++---------+----+
+|    LiLei|  89|
+|HanMeiMei|  97|
+|     Lucy|  66|
++---------+----+
+
+```
+
+```python
+
+#json构造(to_json)和解析(get_json_object)
+
+#构造学生数据
+dfstudents = spark.createDataFrame([("LiLei","Math",70),("LiLei","English",87)
+  ,("HanMeimei","Math",80),("HanMeimei","English",90)]).toDF("name","course","score")
+print("dfstudents:")
+dfstudents.show() 
+
+#构造named_struct类型
+dfnamed_struct = dfstudents.selectExpr("name","named_struct('course',course,'score',score) as scores")
+print("dfnamed_struct:")
+dfnamed_struct.show() 
+
+
+#构造array(named_struct)类型
+dfagg = dfnamed_struct.groupby("name").agg(F.expr("collect_list(scores) as arr_scores"))
+print("dfagg:")
+dfagg.show() 
+
+#转换成json 
+dfjson = dfagg.selectExpr("name","to_json(arr_scores) as json_scores")
+print("dfjson:")
+dfjson.show() 
+
+#使用get_json_object解析json 
+dfscores = dfjson.selectExpr("name",
+    "get_json_object(json_scores,'$[0].score') as Math",
+    "get_json_object(json_scores,'$[1].score') as English",)
+print("dfscores:")
+dfscores.show() 
+
+```
+
+```
+dfstudents:
++---------+-------+-----+
+|     name| course|score|
++---------+-------+-----+
+|    LiLei|   Math|   70|
+|    LiLei|English|   87|
+|HanMeimei|   Math|   80|
+|HanMeimei|English|   90|
++---------+-------+-----+
+
+dfnamed_struct:
++---------+------------+
+|     name|      scores|
++---------+------------+
+|    LiLei|   [Math,70]|
+|    LiLei|[English,87]|
+|HanMeimei|   [Math,80]|
+|HanMeimei|[English,90]|
++---------+------------+
+
+dfagg:
++---------+--------------------+
+|     name|          arr_scores|
++---------+--------------------+
+|    LiLei|[[Math,70], [Engl...|
+|HanMeimei|[[Math,80], [Engl...|
++---------+--------------------+
+
+dfjson:
++---------+--------------------+
+|     name|         json_scores|
++---------+--------------------+
+|    LiLei|[{"course":"Math"...|
+|HanMeimei|[{"course":"Math"...|
++---------+--------------------+
+
+dfscores:
++---------+----+-------+
+|     name|Math|English|
++---------+----+-------+
+|    LiLei|  70|     87|
+|HanMeimei|  80|     90|
++---------+----+-------+
+```
+
+
+### 五，DataFrame的SQL交互
 
 将DataFrame注册为临时表视图或者全局表视图后，可以使用sql语句对DataFrame进行交互。
 
@@ -1548,7 +1774,39 @@ dfdata.show()
 ```
 
 ```python
+#删除分区
+query = """
+ALTER TABLE `students`
+DROP IF EXISTS
+PARTITION(class='class3') 
+""".replace("\n"," ")
+spark.sql(query)
 
+```
+
+```python
+#查看剩下数据
+dfremain = spark.sql("select * from students")
+dfremain.show() 
+```
+
+
+```
++---------+---+------+------+
+|     name|age| class|gender|
++---------+---+------+------+
+|    Jerry| 19|class4|  male|
+|    David| 18|class4|  male|
+|    LiLei| 18|class1|  male|
+|   DaChui| 19|class2|  male|
+|     Lily| 17|class1|female|
+|HanMeimei| 17|class2|female|
+|      Ann| 17|class4|female|
+|      Amy| 17|class4|female|
++---------+---+------+------+
+```
+
+```python
 ```
 
 **如果本书对你有所帮助，想鼓励一下作者，记得给本项目加一颗星星star⭐️，并分享给你的朋友们喔😊!** 
